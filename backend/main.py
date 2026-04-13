@@ -99,18 +99,36 @@ async def personalize(
         async def event_stream():
             state = dict(initial_state)
             try:
-                # Stream SSE events as graph progresses using astream
-                async for chunk in app_graph.astream(initial_state, stream_mode="updates"):
-                    for node_name, updates in chunk.items():
-                        state.update(updates)
-                        
-                        if node_name in STREAMABLE_NODES:
-                            yield f"data: {json.dumps({'step': node_name, 'done': True})}\n\n"
+                import asyncio
+                
+                # We want to yield heartbeats to prevent connection timeouts
+                # during long-running nodes (like Playwright).
+                async def get_stream():
+                    async for chunk in app_graph.astream(initial_state, stream_mode="updates"):
+                        yield chunk
+
+                stream_iterator = get_stream()
+                
+                while True:
+                    try:
+                        # Wait for either a chunk or a heartbeat timeout
+                        chunk = await asyncio.wait_for(stream_iterator.__anext__(), timeout=10.0)
+                        for node_name, updates in chunk.items():
+                            print(f"[DEBUG] Node finished: {node_name}")
+                            state.update(updates)
                             
-                        # If a node intentionally returned an error update, stop processing
-                        if "error" in updates and updates["error"]:
-                            yield f"data: {json.dumps({'status': 'error', 'message': updates['error']})}\n\n"
-                            return
+                            if node_name in STREAMABLE_NODES:
+                                yield f"data: {json.dumps({'step': node_name, 'done': True})}\n\n"
+                                
+                            if "error" in updates and updates["error"]:
+                                print(f"[ERROR] Node {node_name} reported error: {updates['error']}")
+                                yield f"data: {json.dumps({'status': 'error', 'message': updates['error']})}\n\n"
+                                return
+                    except asyncio.TimeoutError:
+                        # Send a keep-alive comment to the browser/proxy
+                        yield ": keep-alive\n\n"
+                    except StopAsyncIteration:
+                        break
 
                 # Send final success event
                 result = {

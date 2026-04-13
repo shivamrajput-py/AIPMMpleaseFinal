@@ -11,9 +11,13 @@ async def playwright_node(state: GraphState) -> dict:
 
     url = state["lp_url"]
 
+    print(f"[DEBUG] Playwright starting for URL: {url}")
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox"]
+            )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
                 viewport={"width": 1440, "height": 900}
@@ -23,6 +27,7 @@ async def playwright_node(state: GraphState) -> dict:
             await page.wait_for_timeout(2000)
             rendered_html = await page.content()
             await browser.close()
+            print(f"[DEBUG] Playwright finished success: {len(rendered_html)} bytes")
 
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}/"
